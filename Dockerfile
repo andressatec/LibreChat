@@ -51,6 +51,9 @@ RUN \
         sleep 10 ; \
     done
 
+# Increment CACHE_BUST in Railway build variables to invalidate COPY + build layers.
+ARG CACHE_BUST=1
+
 COPY --chown=node:node . .
 
 RUN \
