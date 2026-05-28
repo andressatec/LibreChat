@@ -478,6 +478,7 @@ export function getOpenAILLMConfig({
   if (!useOpenRouter && llmConfig.useResponsesApi == null && llmConfig.model) {
     if (/\bgpt-[5-9]\.\d/i.test(llmConfig.model as string)) {
       llmConfig.useResponsesApi = true;
+      console.log(`[useResponsesApi] auto-enabled for model: ${llmConfig.model}`);
     }
   }
 
