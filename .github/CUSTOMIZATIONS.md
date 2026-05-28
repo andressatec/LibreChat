@@ -180,6 +180,36 @@ sincronização futura o remova.
 
 ---
 
+## 5. Agentes com GPT-5.x — ativação automática da Responses API
+
+**Problema resolvido:** agentes criados com modelos `gpt-5.4` (ou qualquer
+`gpt-5.x` versionado) iniciavam mas não produziam nenhuma saída de texto.
+A função `getOpenAILLMConfig` só ativava `useResponsesApi: true` quando a
+busca na web estava habilitada — nunca por detecção do modelo.
+
+### `packages/api/src/endpoints/openai/llm.ts`
+
+**O que fizemos:** adicionamos detecção automática de modelos `gpt-[5-9].x`
+antes do bloco de web search (linha ~476), ativando `useResponsesApi = true`
+quando o modelo é versionado (ex.: `gpt-5.4`, `gpt-5.4-mini`) e o flag
+ainda não foi configurado explicitamente.
+
+```ts
+if (!useOpenRouter && llmConfig.useResponsesApi == null && llmConfig.model) {
+  if (/\bgpt-[5-9]\.\d/i.test(llmConfig.model as string)) {
+    llmConfig.useResponsesApi = true;
+  }
+}
+```
+
+O regex `/\bgpt-[5-9]\.\d/i` exclui intencionalmente `gpt-5` (base), que é
+tratado como modelo de raciocínio separado pelo upstream.
+
+**Como resolver conflito:** manter a versão do upstream + reinserir o bloco
+acima imediatamente antes de `if (useOpenRouter && enableWebSearch)`.
+
+---
+
 ## Configuração da Nova (fora do repositório)
 
 O `librechat.yaml` com as configurações da Nova (modelSpecs, fileConfig,

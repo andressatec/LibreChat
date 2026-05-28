@@ -473,6 +473,14 @@ export function getOpenAILLMConfig({
     enablePromptCache = false;
   }
 
+  /** Auto-enable Responses API for versioned GPT-5+ models (e.g. gpt-5.4) when not
+   * explicitly configured. Base gpt-5 is excluded — it's a reasoning model handled separately. */
+  if (!useOpenRouter && llmConfig.useResponsesApi == null && llmConfig.model) {
+    if (/\bgpt-[5-9]\.\d/i.test(llmConfig.model as string)) {
+      llmConfig.useResponsesApi = true;
+    }
+  }
+
   if (useOpenRouter && enableWebSearch) {
     /** OpenRouter expects web search as a plugins parameter */
     modelKwargs.plugins = [{ id: 'web' }];
