@@ -126,8 +126,8 @@ if: github.repository == 'danny-avila/LibreChat' && (
 
 | Arquivo | Job | Posição do guard |
 |---|---|---|
-| `.github/workflows/gitnexus-deploy-do.yml` | `build-image` | Envolvendo condição existente com `&&` |
-| `.github/workflows/gitnexus-deploy-do.yml` | `deploy` | Novo `if:` adicionado |
+| `.github/workflows/gitnexus-deploy.yml` | `build-image` | Envolvendo condição existente com `&&` |
+| `.github/workflows/gitnexus-deploy.yml` | `deploy` | Novo `if:` adicionado |
 | `.github/workflows/gitnexus-cleanup-pr.yml` | `cleanup` | Prefixando condição existente com `&&` |
 | `.github/workflows/gitnexus-index.yml` | `index` | Envolvendo condição existente com `&&` |
 | `.github/workflows/gitnexus-pr-command.yml` | `dispatch` | Prefixando condição existente com `&&` |
@@ -144,9 +144,39 @@ if: |
   )
 ```
 
-> **Atenção:** o upstream renomeou `gitnexus-deploy-do.yml` para
-> `gitnexus-deploy.yml` em abril/2026. Verificar se o arquivo ainda existe
-> com esse nome após futuros syncs.
+---
+
+## 4. Workflows de publish NPM — guard no job `publish-npm`
+
+**Problema resolvido:** em maio/2026 o upstream refatorou os workflows de
+publish (`client.yml`, `data-provider.yml`, `data-schemas.yml`) separando o
+job único em dois: `pack` (build + empacotamento) e `publish-npm` (publicação
+no npm). Nosso guard que estava no job antigo passou a conflitar.
+
+**Guard atual nos 3 arquivos (job `publish-npm`):**
+
+```yaml
+# client.yml e data-schemas.yml
+  publish-npm:
+    needs: pack
+    if: github.repository == 'danny-avila/LibreChat' && github.ref == 'refs/heads/main' && needs.pack.outputs.skip != 'true'
+
+# data-provider.yml
+  publish-npm:
+    needs: pack
+    if: github.repository == 'danny-avila/LibreChat' && github.ref == 'refs/heads/main'
+```
+
+O job `pack` não precisa de guard — ele só builda e empacota, sem publicar.
+
+**Como resolver conflito:**
+
+1. Aceitar a estrutura nova do upstream para o arquivo inteiro
+2. Garantir que o job `publish-npm` tenha `github.repository == 'danny-avila/LibreChat' &&`
+   prefixando a condição `if:` existente
+
+O `sync-fork.yml` restaura o guard automaticamente via `sed` caso uma
+sincronização futura o remova.
 
 ---
 

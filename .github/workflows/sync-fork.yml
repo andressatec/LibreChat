@@ -59,24 +59,34 @@ jobs:
       - name: Garantir que workflows do upstream não rodem no fork
         if: steps.check.outputs.commits != '0'
         run: |
-          # Lista de workflows que não devem rodar no fork
-          FILES=(
+          CHANGED=false
+          GUARD="github.repository == 'danny-avila/LibreChat'"
+
+          # Workflows com job único: insere guard antes do primeiro runs-on
+          SINGLE_JOB_FILES=(
             ".github/workflows/dev-images.yml"
             ".github/workflows/dev-branch-images.yml"
             ".github/workflows/locize-i18n-sync.yml"
+          )
+          for FILE in "${SINGLE_JOB_FILES[@]}"; do
+            if [ -f "$FILE" ] && ! grep -q "danny-avila/LibreChat" "$FILE"; then
+              sed -i "0,/    runs-on: ubuntu-latest/{s/    runs-on: ubuntu-latest/    if: $GUARD\n    runs-on: ubuntu-latest/}" "$FILE"
+              echo "  ✅ Guard restaurado em: $FILE"
+              CHANGED=true
+            fi
+          done
+
+          # Workflows de publish (pack + publish-npm): guard no job publish-npm
+          PUBLISH_FILES=(
             ".github/workflows/client.yml"
             ".github/workflows/data-provider.yml"
             ".github/workflows/data-schemas.yml"
           )
-
-          CHANGED=false
-          GUARD="    if: github.repository == 'danny-avila/LibreChat'"
-
-          for FILE in "${FILES[@]}"; do
+          for FILE in "${PUBLISH_FILES[@]}"; do
             if [ -f "$FILE" ] && ! grep -q "danny-avila/LibreChat" "$FILE"; then
-              # Insere o guard logo antes do primeiro "runs-on:" dentro de jobs
-              # (substitui apenas a primeira ocorrência)
-              sed -i "0,/    runs-on: ubuntu-latest/{s/    runs-on: ubuntu-latest/$GUARD\n    runs-on: ubuntu-latest/}" "$FILE"
+              # Substitui "if: github.ref" por "if: github.repository == '...' && github.ref"
+              # apenas na primeira ocorrência (que pertence ao job publish-npm)
+              sed -i "0,/    if: github.ref/{s/    if: github.ref/    if: $GUARD \&\& github.ref/}" "$FILE"
               echo "  ✅ Guard restaurado em: $FILE"
               CHANGED=true
             fi

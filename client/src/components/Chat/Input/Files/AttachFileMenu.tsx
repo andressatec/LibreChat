@@ -82,7 +82,7 @@ const AttachFileMenu = ({
   const [ephemeralAgent, setEphemeralAgent] = useRecoilState(
     ephemeralAgentByConvoId(conversationId),
   );
-  const [toolResource, setToolResource] = useState<EToolResources | undefined>();
+  const toolResourceRef = useRef<EToolResources | undefined>();
   const { handleFileChange } = useFileHandlingNoChatContext(undefined, {
     files,
     setFiles,
@@ -91,7 +91,7 @@ const AttachFileMenu = ({
   });
   const { handleSharePointFiles, isProcessing, downloadProgress } =
     useSharePointFileHandlingNoChatContext(
-      { toolResource },
+      { toolResource: toolResourceRef.current },
       { files, setFiles, setFilesLoading, conversation },
     );
 
@@ -143,6 +143,10 @@ const AttachFileMenu = ({
   );
 
   const dropdownItems = useMemo(() => {
+    const setToolResource = (value: EToolResources | undefined) => {
+      toolResourceRef.current = value;
+    };
+
     const createMenuItems = (onAction: (fileType?: FileUploadType) => void) => {
       const items: MenuItemProps[] = [];
 
@@ -154,7 +158,9 @@ const AttachFileMenu = ({
       }
 
       const isAzureWithResponsesApi =
-        currentProvider === EModelEndpoint.azureOpenAI && useResponsesApi;
+        (currentProvider === EModelEndpoint.azureOpenAI ||
+          endpointType === EModelEndpoint.azureOpenAI) &&
+        useResponsesApi === true;
 
       if (
         isDocumentSupportedProvider(endpointType) ||
@@ -217,7 +223,7 @@ const AttachFileMenu = ({
 
       if (capabilities.codeEnabled && codeAllowedByAgent) {
         items.push({
-          label: localize('com_ui_upload_code_files'),
+          label: localize('com_ui_upload_code_environment'),
           onClick: () => {
             setToolResource(EToolResources.execute_code);
             setEphemeralAgent((prev) => ({
@@ -258,7 +264,6 @@ const AttachFileMenu = ({
     capabilities,
     useResponsesApi,
     handleUploadClick,
-    setToolResource,
     setEphemeralAgent,
     sharePointEnabled,
     codeAllowedByAgent,
@@ -302,7 +307,8 @@ const AttachFileMenu = ({
       <FileUpload
         ref={inputRef}
         handleFileChange={(e) => {
-          handleFileChange(e, toolResource);
+          handleFileChange(e, toolResourceRef.current);
+          toolResourceRef.current = undefined;
         }}
       >
         <DropdownPopup

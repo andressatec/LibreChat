@@ -35,6 +35,8 @@ const mockDomainParser = jest.fn();
 const mockLegacyDomainEncode = jest.fn();
 const mockDecryptMetadata = jest.fn();
 const mockCreateActionTool = jest.fn();
+const mockGetServerConfig = jest.fn();
+const mockResolveConfigServers = jest.fn();
 jest.mock('~/server/services/Tools/credentials', () => ({
   loadAuthValues: jest.fn().mockResolvedValue({}),
 }));
@@ -69,9 +71,12 @@ jest.mock('~/models', () => ({
 }));
 jest.mock('~/config', () => ({
   getFlowStateManager: jest.fn(() => ({})),
+  getMCPServersRegistry: jest.fn(() => ({
+    getServerConfig: (...args) => mockGetServerConfig(...args),
+  })),
 }));
 jest.mock('~/server/services/MCP', () => ({
-  resolveConfigServers: jest.fn().mockResolvedValue({}),
+  resolveConfigServers: (...args) => mockResolveConfigServers(...args),
 }));
 jest.mock('~/cache', () => ({
   getLogStores: jest.fn(() => ({})),
@@ -113,6 +118,11 @@ describe('ToolService - Action Capability Gating', () => {
     });
     mockLoadToolsUtil.mockResolvedValue({ loadedTools: [], toolContextMap: {} });
     mockLoadActionSets.mockResolvedValue([]);
+    mockGetMCPServerTools.mockResolvedValue(null);
+    mockGetCachedTools.mockResolvedValue(null);
+    mockGetUserMCPAuthMap.mockResolvedValue({});
+    mockGetServerConfig.mockResolvedValue(undefined);
+    mockResolveConfigServers.mockResolvedValue({});
   });
 
   describe('resolveAgentCapabilities', () => {
@@ -259,6 +269,92 @@ describe('ToolService - Action Capability Gating', () => {
 
       expect(result.actionsEnabled).toBe(false);
     });
+
+    it('should not expose cached MCP tool definitions when the registry lookup fails', async () => {
+      const serverName = 'private-server';
+      const mcpTool = `search${Constants.mcp_delimiter}${serverName}`;
+      const capabilities = [AgentCapabilities.tools];
+      const req = createMockReq(capabilities);
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+      mockGetServerConfig.mockImplementation(() => {
+        throw new Error('MCPServersRegistry has not been initialized.');
+      });
+      mockGetMCPServerTools.mockResolvedValue({
+        [mcpTool]: {
+          function: {
+            name: mcpTool,
+            description: 'Cached private search',
+            parameters: {},
+          },
+        },
+      });
+      mockLoadToolDefinitions.mockImplementation(async (params, deps) => {
+        const serverTools = await deps.getOrFetchMCPServerTools(params.userId, serverName);
+        return {
+          toolDefinitions: serverTools ? Object.keys(serverTools) : [],
+          toolRegistry: new Map(),
+          hasDeferredTools: false,
+        };
+      });
+
+      const result = await loadAgentTools({
+        req,
+        res: {},
+        agent: { id: 'agent_123', tools: [mcpTool] },
+        definitionsOnly: true,
+      });
+
+      expect(result.toolDefinitions).toEqual([]);
+      expect(mockGetMCPServerTools).not.toHaveBeenCalled();
+    });
+
+    it('should use request-scoped MCP config before falling back to the registry', async () => {
+      const serverName = 'config-server';
+      const mcpTool = `search${Constants.mcp_delimiter}${serverName}`;
+      const capabilities = [AgentCapabilities.tools];
+      const req = createMockReq(capabilities);
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+      mockResolveConfigServers.mockResolvedValue({
+        [serverName]: {
+          type: 'streamable-http',
+          url: 'https://config.example.com/mcp',
+          customUserVars: {
+            TOKEN: { title: 'Token', description: 'Token' },
+          },
+        },
+      });
+      mockGetUserMCPAuthMap.mockResolvedValue({
+        [`${Constants.mcp_prefix}${serverName}`]: { TOKEN: 'secret' },
+      });
+      mockGetMCPServerTools.mockResolvedValue({
+        [mcpTool]: {
+          function: {
+            name: mcpTool,
+            description: 'Config search',
+            parameters: {},
+          },
+        },
+      });
+      mockLoadToolDefinitions.mockImplementation(async (params, deps) => {
+        const serverTools = await deps.getOrFetchMCPServerTools(params.userId, serverName);
+        return {
+          toolDefinitions: serverTools ? Object.keys(serverTools) : [],
+          toolRegistry: new Map(),
+          hasDeferredTools: false,
+        };
+      });
+
+      const result = await loadAgentTools({
+        req,
+        res: {},
+        agent: { id: 'agent_123', tools: [mcpTool] },
+        definitionsOnly: true,
+      });
+
+      expect(result.toolDefinitions).toEqual([mcpTool]);
+      expect(mockGetServerConfig).not.toHaveBeenCalled();
+      expect(mockGetMCPServerTools).toHaveBeenCalledWith(req.user.id, serverName);
+    });
   });
 
   describe('loadAgentTools (definitionsOnly=false) — action tool filtering', () => {
@@ -299,6 +395,76 @@ describe('ToolService - Action Capability Gating', () => {
   describe('loadToolsForExecution — action tool gating', () => {
     const actionToolName = `get_weather${actionDelimiter}api_example_com`;
     const regularTool = Tools.web_search;
+
+    it('loads bash PTC under the legacy programmatic tool name when code capabilities are enabled', async () => {
+      const capabilities = [
+        AgentCapabilities.tools,
+        AgentCapabilities.programmatic_tools,
+        AgentCapabilities.execute_code,
+      ];
+      const req = createMockReq(capabilities);
+      const toolRegistry = new Map([['custom_tool', { name: 'custom_tool' }]]);
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+
+      const result = await loadToolsForExecution({
+        req,
+        res: {},
+        agent: { id: 'agent_ptc', tools: [Tools.execute_code] },
+        toolNames: [Constants.PROGRAMMATIC_TOOL_CALLING],
+        toolRegistry,
+        actionsEnabled: false,
+      });
+
+      expect(result.loadedTools.map((tool) => tool.name)).toEqual([
+        Constants.PROGRAMMATIC_TOOL_CALLING,
+      ]);
+      expect(result.configurable.toolRegistry).toBe(toolRegistry);
+      expect(result.configurable.ptcToolMap.size).toBe(0);
+    });
+
+    it('does not load PTC when programmatic tools capability is disabled', async () => {
+      const capabilities = [AgentCapabilities.tools, AgentCapabilities.execute_code];
+      const req = createMockReq(capabilities);
+      const toolRegistry = new Map([['custom_tool', { name: 'custom_tool' }]]);
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+
+      const result = await loadToolsForExecution({
+        req,
+        res: {},
+        agent: { id: 'agent_ptc', tools: [Tools.execute_code] },
+        toolNames: [Constants.BASH_PROGRAMMATIC_TOOL_CALLING],
+        toolRegistry,
+        actionsEnabled: false,
+      });
+
+      expect(result.loadedTools.map((tool) => tool.name)).toEqual([]);
+      expect(result.configurable.toolRegistry).toBeUndefined();
+      expect(result.configurable.ptcToolMap).toBeUndefined();
+    });
+
+    it('does not load PTC when agent did not request execute_code', async () => {
+      const capabilities = [
+        AgentCapabilities.tools,
+        AgentCapabilities.programmatic_tools,
+        AgentCapabilities.execute_code,
+      ];
+      const req = createMockReq(capabilities);
+      const toolRegistry = new Map([['custom_tool', { name: 'custom_tool' }]]);
+      mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+
+      const result = await loadToolsForExecution({
+        req,
+        res: {},
+        agent: { id: 'agent_ptc', tools: [] },
+        toolNames: [Constants.BASH_PROGRAMMATIC_TOOL_CALLING],
+        toolRegistry,
+        actionsEnabled: false,
+      });
+
+      expect(result.loadedTools.map((tool) => tool.name)).toEqual([]);
+      expect(result.configurable.toolRegistry).toBeUndefined();
+      expect(result.configurable.ptcToolMap).toBeUndefined();
+    });
 
     it('should skip action tool loading when actionsEnabled=false', async () => {
       const req = createMockReq([]);
